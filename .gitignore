@@ -2,3 +2,4 @@
 .platformio/
 .vscode/
 CMakeLists.txt
+sdkconfig.*.old
