@@ -1,15 +1,14 @@
 #include "Constants.h"
-#include <AccelStepper.h>
+#include <Arduino.h>
 #include <AceButton.h>
 #include <RotaryEncoder.h>
 #include <FastAccelStepper.h>
 #include "LowPassFilter.h"
 #include "nvs_flash.h"
-#include "BluetoothSerial.h"
+#include "esp_pthread.h"
 
 using namespace ace_button;
 
-BluetoothSerial SerialBT;
 RotaryEncoder fineStepEncoder(ROTARY_PIN_A, ROTARY_PIN_B, RotaryEncoder::LatchMode::TWO03);
 FastAccelStepperEngine engine = FastAccelStepperEngine();
 FastAccelStepper *stepper;
@@ -17,6 +16,11 @@ ButtonConfig cw_button_config;
 AceButton cw_button(&cw_button_config);
 ButtonConfig ccw_button_config;
 AceButton ccw_button(&ccw_button_config);
+ButtonConfig toggle_encoder_button_config;
+AceButton toggle_encoder_button(&toggle_encoder_button_config);
+
+auto encoderEnabled = true;
+auto lastEncoderPosition = 0;
 
 void processPotentiometer()
 {
@@ -38,21 +42,21 @@ void processPotentiometer()
 
 void processEncoder()
 {
-	static auto lastPosition = 0;
-
+	if (!encoderEnabled) return;
 	auto currentPosition = fineStepEncoder.getPosition();
-	float delta = currentPosition - lastPosition;
+	float delta = currentPosition - lastEncoderPosition;
 	if (delta == 0) return;
-	stepper->move((long)(delta / 48 * 6400L));
-	lastPosition = currentPosition;
+	stepper->move(delta * 2);
+	lastEncoderPosition = currentPosition;
 }
 
-void inputProcessingTask(void *pvParameter)
+void* inputProcessingTask(void *pvParameter)
 {
 	while (1)
 	{
 		cw_button.check();
 		ccw_button.check();
+		toggle_encoder_button.check();
 		processPotentiometer();
 		processEncoder();
 		vTaskDelay(5 / portTICK_PERIOD_MS);
@@ -61,10 +65,9 @@ void inputProcessingTask(void *pvParameter)
 
 extern "C" void app_main()
 {
+	esp_log_level_set("*", ESP_LOG_ERROR);
 	ESP_ERROR_CHECK(nvs_flash_init());
 	Serial.begin(115200);
-	SerialBT.begin("HelloWorld");
-	SerialBT.setPin("1234");
 
 	attachInterrupt(digitalPinToInterrupt(ROTARY_PIN_A), []() { fineStepEncoder.tick(); }, CHANGE);
 	attachInterrupt(digitalPinToInterrupt(ROTARY_PIN_B), []() { fineStepEncoder.tick(); }, CHANGE);
@@ -85,6 +88,15 @@ extern "C" void app_main()
 		else if (eventType == AceButton::kEventReleased) stepper->forceStop();
 	});
 
+	pinMode(TOGGLE_ENCODER_PIN, INPUT_PULLUP);
+	toggle_encoder_button.init(TOGGLE_ENCODER_PIN);
+	toggle_encoder_button.setEventHandler([](AceButton *b, uint8_t eventType, uint8_t state)
+	{
+		if (eventType != AceButton::kEventPressed) return;
+		encoderEnabled = !encoderEnabled;
+		lastEncoderPosition = fineStepEncoder.getPosition();
+	});
+
 	engine.init();
 	stepper = engine.stepperConnectToPin(STEP_PIN);
 	stepper->setEnablePin(ENABLE_PIN);
@@ -93,7 +105,6 @@ extern "C" void app_main()
 	stepper->setAcceleration(1000000 / 5);
 	stepper->setAutoEnable(true);
 
-	xTaskCreate(&inputProcessingTask, "inputProcessingTask", 2048 * 2, NULL, 20, NULL);
+	pthread_t thread;
+	pthread_create(&thread, NULL, inputProcessingTask, NULL);
 }
-
-// esp_log_level_set("*", ESP_LOG_NONE);

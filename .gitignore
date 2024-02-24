@@ -3,3 +3,4 @@
 .vscode/
 CMakeLists.txt
 sdkconfig.*.old
+.cache/
