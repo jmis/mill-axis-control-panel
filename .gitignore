@@ -4,3 +4,7 @@
 CMakeLists.txt
 sdkconfig.*.old
 .cache/
+.idea/
+.vscode/
+cmake-build-debug/
+.fleet/
